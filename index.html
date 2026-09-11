@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expense Ledger</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#22293A">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Expenses">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root{
+    --paper:#F6F1E7;
+    --paper-deep:#EFE8D8;
+    --line:#DCD2B8;
+    --ink:#22293A;
+    --ink-soft:#6B7185;
+    --red:#9C3B3B;
+    --green:#3D6B58;
+    --green-deep:#2E5245;
+    --amber:#9C7A2E;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper-deep);
+    font-family:Georgia,"Source Serif 4","Iowan Old Style",serif;
+    color:var(--ink);
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+    padding:32px 16px 80px;
+  }
+  .sheet{
+    width:100%;
+    max-width:660px;
+    background:var(--paper);
+    border:1px solid var(--line);
+    box-shadow:0 1px 0 var(--line), 0 20px 40px -24px rgba(34,41,58,0.35);
+    position:relative;
+  }
+  .sheet::before{
+    content:"";
+    position:absolute;
+    top:-10px; left:0; right:0; height:20px;
+    background:radial-gradient(circle at 10px 10px, var(--paper-deep) 9px, transparent 10px) repeat-x;
+    background-size:20px 20px;
+  }
+  header{
+    padding:34px 32px 18px;
+    border-bottom:1px dashed var(--line);
+    text-align:center;
+  }
+  header h1{margin:0 0 4px; font-size:1.6rem; font-weight:600;}
+  header p{margin:0; color:var(--ink-soft); font-size:0.85rem; font-style:italic;}
+
+  .fileinfo{
+    margin-top:14px;
+    display:inline-flex;
+    gap:16px;
+    flex-wrap:wrap;
+    justify-content:center;
+    font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+    font-size:0.72rem;
+    color:var(--ink-soft);
+  }
+  .fileinfo b{color:var(--ink); font-weight:600;}
+
+  .section{padding:22px 32px; border-bottom:1px dashed var(--line);}
+  .section:last-of-type{border-bottom:none;}
+  .section h2{
+    font-size:0.7rem; font-weight:600; letter-spacing:0.06em;
+    color:var(--ink-soft); margin:0 0 14px;
+  }
+  .section.disabled{opacity:0.4; pointer-events:none;}
+
+  .file-btn, .scan-btn{
+    display:inline-flex; align-items:center; gap:8px;
+    font-family:inherit; font-size:0.85rem;
+    padding:9px 16px; cursor:pointer; border-radius:2px;
+  }
+  .file-btn{border:1px solid var(--ink); background:transparent; color:var(--ink);}
+  .file-btn:hover{background:var(--ink); color:var(--paper);}
+  .scan-btn{border:1px solid var(--green); background:transparent; color:var(--green);}
+  .scan-btn:hover{background:var(--green); color:#fff;}
+  input[type="file"]{display:none;}
+  .import-status{font-size:0.8rem; color:var(--ink-soft); font-style:italic; margin-top:8px;}
+  .import-status.error{color:var(--red);}
+  .import-status.ok{color:var(--green-deep);}
+
+  .ocr-status{margin-top:10px; font-size:0.78rem; color:var(--ink-soft); font-style:italic; min-height:1.1em;}
+  .ocr-preview{margin-top:10px; max-width:130px; border:1px solid var(--line); display:block;}
+
+  .bills-bar{
+    margin-top:14px; display:flex; align-items:center; justify-content:space-between;
+    gap:10px; flex-wrap:wrap;
+  }
+  .bills-count{font-size:0.78rem; color:var(--ink-soft);}
+  .bills-count b{color:var(--ink);}
+  .bills-btn{
+    font-family:inherit; font-size:0.78rem; padding:7px 14px; cursor:pointer;
+    border:1px solid var(--ink); background:transparent; color:var(--ink); border-radius:2px;
+  }
+  .bills-btn:hover{background:var(--ink); color:var(--paper);}
+  .bills-btn:disabled{border-color:#B7BCC7; color:#B7BCC7; cursor:not-allowed; background:none;}
+  .bills-gallery{
+    display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;
+  }
+  .bill-thumb{position:relative; width:52px; height:52px;}
+  .bill-thumb img{width:100%; height:100%; object-fit:cover; border:1px solid var(--line);}
+  .bill-thumb .thumb-tag{
+    position:absolute; bottom:0; left:0; right:0; text-align:center;
+    background:rgba(34,41,58,0.72); color:#fff; font-size:0.55rem; line-height:1.4;
+    letter-spacing:0.02em; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
+  }
+  .bill-thumb .thumb-del{
+    position:absolute; top:-7px; right:-7px; width:18px; height:18px; border-radius:50%;
+    background:var(--red); color:#fff; border:none; font-size:0.7rem; line-height:1; cursor:pointer;
+  }
+
+  .entry-fields{display:grid; grid-template-columns:1fr; gap:10px;}
+  .row2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .row3{display:grid; grid-template-columns:1.4fr 1fr 0.8fr; gap:10px;}
+  .row3-even{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;}
+  label{display:block; font-size:0.68rem; letter-spacing:0.04em; color:var(--ink-soft); margin-bottom:4px;}
+  input[type="text"], input[type="number"], input[type="date"], select{
+    width:100%; font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+    font-size:0.92rem; padding:9px 10px; border:1px solid var(--line);
+    background:#fff; color:var(--ink); border-radius:2px;
+  }
+  input:focus, select:focus{outline:2px solid var(--green); outline-offset:1px;}
+
+  .action-row{display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;}
+  button.primary{
+    font-family:inherit; font-size:0.85rem; padding:10px 18px;
+    background:var(--green); color:#fff; border:none; cursor:pointer; border-radius:2px;
+  }
+  button.primary:hover{background:var(--green-deep);}
+  button.primary:disabled{background:#B7BCC7; cursor:not-allowed;}
+  .add-status{font-size:0.78rem; margin-top:8px; font-style:italic;}
+  .add-status.ok{color:var(--green-deep);}
+  .add-status.warn{color:var(--amber);}
+
+  .cat-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .cat-card{
+    border:1px solid var(--line); padding:12px 14px; background:#fff;
+  }
+  .cat-card .cat-name{font-size:0.82rem; font-weight:600;}
+  .cat-card .cat-sub{
+    font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+    font-size:1.1rem; color:var(--ink); margin-top:4px;
+  }
+  .cat-card .cat-meta{font-size:0.7rem; color:var(--ink-soft); margin-top:4px;}
+  .cat-card .cat-meta.warn{color:var(--amber);}
+
+  table{width:100%; border-collapse:collapse; margin-top:4px;}
+  thead th{
+    text-align:left; font-size:0.66rem; letter-spacing:0.04em; color:var(--ink-soft);
+    font-weight:600; padding-bottom:6px; border-bottom:1px solid var(--line);
+  }
+  thead th:last-child, tbody td:last-child{text-align:right;}
+  tbody td{
+    padding:8px 0; border-bottom:1px dashed var(--line); font-size:0.85rem;
+  }
+  tbody td.num{
+    font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+    font-variant-numeric:tabular-nums;
+  }
+  .del-btn{background:none; border:none; color:var(--red); cursor:pointer; font-size:1.05rem; padding:2px 6px;}
+  .empty-row td{text-align:center; color:var(--ink-soft); font-style:italic; padding:16px 0;}
+
+  .total-line{padding:24px 32px 30px; display:flex; align-items:baseline; justify-content:space-between;}
+  .total-label{font-size:0.8rem; letter-spacing:0.05em; color:var(--ink-soft);}
+  .total-value{
+    font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+    font-size:1.9rem; color:var(--red); font-weight:600; font-variant-numeric:tabular-nums;
+  }
+  .export-row{padding:0 32px 32px;}
+  .export-btn{
+    width:100%; font-family:inherit; font-size:0.9rem; padding:13px 20px;
+    background:var(--ink); color:var(--paper); border:none; cursor:pointer; border-radius:2px;
+  }
+  .export-btn:hover{background:#111726;}
+  .export-btn:disabled{background:#B7BCC7; cursor:not-allowed;}
+  .export-note{font-size:0.72rem; color:var(--ink-soft); margin-top:8px; font-style:italic;}
+
+  .curr-row{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; align-items:end;}
+  .curr-row .curr-label-wrap{position:relative;}
+  .curr-tag{font-size:0.65rem; color:var(--ink-soft); margin-bottom:4px; display:block;}
+  .setup-note{font-size:0.72rem; color:var(--ink-soft); font-style:italic; margin-top:2px;}
+  .direct-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:8px 10px; background:var(--paper-deep); border:1px dashed var(--line);
+    font-size:0.78rem; color:var(--ink-soft); margin-bottom:10px;
+  }
+  .direct-row b{color:var(--ink);}
+  .saved-flash{color:var(--green-deep) !important;}
+
+  @media (max-width:480px){
+    .row3, .row2, .row3-even, .cat-grid, .curr-row{grid-template-columns:1fr;}
+    header{padding:26px 20px 16px;}
+    .section, .total-line, .export-row{padding-left:20px; padding-right:20px;}
+  }
+</style>
+</head>
+<body>
+
+<div class="sheet">
+  <header>
+    <h1>Expense Ledger</h1>
+    <p>Load your expense sheet, scan a bill, drop it in the right category.</p>
+    <div class="fileinfo" id="fileInfo" style="display:none;"></div>
+  </header>
+
+  <div class="section">
+    <h2>1 · Load your expense file</h2>
+    <label class="file-btn" for="xlsxInput">Choose .xlsx file</label>
+    <input type="file" id="xlsxInput" accept=".xlsx">
+    <div class="import-status" id="importStatus">No file loaded yet.</div>
+    <div class="import-status" id="persistStatus" style="display:none;"></div>
+    <button class="bills-btn" id="forgetBtn" style="display:none; margin-top:8px;">Forget saved data on this device</button>
+  </div>
+
+  <div class="section disabled" id="setupSection">
+    <h2>2 · Project &amp; currencies</h2>
+    <div class="entry-fields">
+      <div class="row3-even">
+        <div>
+          <label for="projectInput">Project</label>
+          <input type="text" id="projectInput" placeholder="C07889">
+        </div>
+        <div>
+          <label for="nameInput">Name / Supervisor</label>
+          <input type="text" id="nameInput" placeholder="Name">
+        </div>
+        <div>
+          <label for="monthInput">Month</label>
+          <input type="month" id="monthInput">
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:16px;">
+      <label style="margin-bottom:8px;">Currencies &amp; exchange rates</label>
+      <div id="currencySetup"></div>
+      <div class="setup-note">Rate = local currency units per 1 EUR (e.g. 3.8 QAR = €1). Clear a code to deactivate that slot. Changes apply to new and already-added entries, and are saved into the file on export.</div>
+    </div>
+  </div>
+
+  <div class="section" id="scanSection">
+    <h2>3 · Scan a bill (optional)</h2>
+    <div style="margin-bottom:12px;">
+      <label for="billCatSelect">Bill category</label>
+      <select id="billCatSelect"></select>
+    </div>
+    <label class="scan-btn" for="cameraInput">📷 Take photo or upload bill</label>
+    <input type="file" id="cameraInput" accept="image/*" capture="environment">
+    <div class="ocr-status" id="ocrStatus"></div>
+    <img id="ocrPreview" class="ocr-preview" style="display:none">
+
+    <div class="bills-bar">
+      <span class="bills-count">Bills captured: <b id="billsCount">0</b></span>
+    </div>
+    <div class="bills-gallery" id="billsGallery"></div>
+    <div class="bills-bar" style="margin-top:14px;">
+      <select id="billsFilterSelect" style="flex:1; min-width:160px;">
+        <option value="__all__">All categories</option>
+      </select>
+      <button class="bills-btn" id="downloadBillsBtn" disabled>Download bills PDF</button>
+    </div>
+  </div>
+
+  <div class="section" id="addSection">
+    <h2>4 · Add expense</h2>
+    <div class="entry-fields">
+      <div>
+        <label for="catSelect">Category</label>
+        <select id="catSelect"></select>
+      </div>
+      <div class="row3">
+        <div>
+          <label for="dateInput">Date</label>
+          <input type="date" id="dateInput">
+        </div>
+        <div>
+          <label for="amountInput">Amount</label>
+          <input type="number" id="amountInput" step="0.01" placeholder="0.00">
+        </div>
+        <div>
+          <label for="currSelect">Currency</label>
+          <select id="currSelect"></select>
+        </div>
+      </div>
+      <div class="action-row">
+        <button class="primary" id="addBtn">Add row</button>
+      </div>
+      <div class="add-status" id="addStatus"></div>
+    </div>
+  </div>
+
+  <div class="section" id="catSection">
+    <h2>Categories</h2>
+    <div class="cat-grid" id="catGrid"></div>
+  </div>
+
+  <div class="section" id="sessionSection">
+    <h2>Added this session</h2>
+    <table>
+      <thead><tr><th>Category</th><th>Date</th><th>Amount</th><th></th></tr></thead>
+      <tbody id="sessionBody">
+        <tr class="empty-row"><td colspan="4">Nothing added yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="total-line">
+    <span class="total-label">TOTAL (EUR)</span>
+    <span class="total-value" id="totalValue">€0.00</span>
+  </div>
+
+  <div class="export-row">
+    <button class="export-btn" id="exportBtn" disabled>Download updated file</button>
+    <div class="export-note" id="exportNote">Load a file first.</div>
+  </div>
+</div>
+
+<script>
+// ---------- state ----------
+let workbook = null;
+let worksheet = null;
+let sourceFileName = 'expenses.xlsx';
+let categories = [];      // {key,label,headerRow,totalRow,slots:[{row,used}],rateRow,originalTotal}
+let currencyOpts = [];    // {col,label,rate} -- active/usable currencies, derived from currencySlots
+let currencySlots = [];   // {col,type:'rate'|'direct'|'empty',label,rate,labelRow}
+let rateRowNum = null;
+let fileInfoMonthStr = '';
+let sessionEntries = [];  // {catKey,catLabel,date,amount,currCol,currLabel,eur,row|null(overflow)}
+let overflow = {};        // catKey -> [{date,amount,currLabel,eur}]
+let billImages = [];      // {dataUrl, width, height, format:'JPEG'|'PNG'}
+
+// ---------- local persistence (so you don't have to re-upload on your phone) ----------
+const STORAGE_KEY = 'expenseLedgerState_v1';
+let saveTimer = null;
+
+function arrayBufferToBase64(buffer){
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunk = 0x8000;
+  for(let i = 0; i < bytes.length; i += chunk){
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+function base64ToArrayBuffer(base64){
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function saveState(){
+  if(!workbook) return;
+  try{
+    const buf = await workbook.xlsx.writeBuffer();
+    const base64 = arrayBufferToBase64(buf);
+    const state = {
+      sourceFileName,
+      workbookBase64: base64,
+      sessionEntries,
+      overflow,
+      billImages
+    };
+    try{
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      showPersistStatus('Saved on this device — no need to re-upload next time.', false);
+    } catch(quotaErr){
+      // likely storage full because of photo data — save everything except the bills
+      try{
+        const lighter = { ...state, billImages: [] };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(lighter));
+        showPersistStatus('Saved on this device, but photos were too large to keep saved locally — download the bills PDF before closing.', true);
+      } catch(e2){
+        showPersistStatus('Could not save locally (storage full) — export your file before closing this tab.', true);
+      }
+    }
+  } catch(err){ /* non-fatal */ }
+}
+function queueSave(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveState, 500);
+}
+function showPersistStatus(msg, isWarn){
+  persistStatus.style.display = 'block';
+  persistStatus.className = 'import-status ' + (isWarn ? 'error' : 'ok');
+  persistStatus.textContent = msg;
+  forgetBtn.style.display = 'inline-flex';
+}
+async function restoreState(){
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if(!raw) return false;
+  try{
+    const state = JSON.parse(raw);
+    const buf = base64ToArrayBuffer(state.workbookBase64);
+    workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buf);
+    parseWorkbook();
+    populateSelectors();
+    renderSetup();
+
+    sourceFileName = state.sourceFileName || sourceFileName;
+    sessionEntries = state.sessionEntries || [];
+    overflow = state.overflow || {};
+    categories.forEach(c => { if(!overflow[c.key]) overflow[c.key] = []; });
+    // relink overflow references so deleting a session row still works
+    sessionEntries.forEach(e => {
+      if(e.overflow && typeof e.overflowIdx === 'number' && overflow[e.catKey]){
+        e.overflowRef = overflow[e.catKey][e.overflowIdx];
+      }
+    });
+    billImages = state.billImages || [];
+
+    renderBillsGallery();
+    renderAll();
+
+    el('setupSection').classList.remove('disabled');
+    el('addSection').classList.remove('disabled');
+    exportBtn.disabled = false;
+    exportNote.textContent = `Will save back into ${sourceFileName}, keeping all formulas and formatting intact.`;
+    importStatus.className = 'import-status ok';
+    importStatus.textContent = `Restored ${sourceFileName} from this device — ${categories.length} categories found.`;
+    showPersistStatus('Loaded automatically — you don\'t need to upload the file again on this device.', false);
+    return true;
+  } catch(err){
+    localStorage.removeItem(STORAGE_KEY);
+    return false;
+  }
+}
+
+const el = id => document.getElementById(id);
+const xlsxInput = el('xlsxInput');
+const importStatus = el('importStatus');
+const fileInfo = el('fileInfo');
+const catSelect = el('catSelect');
+const currSelect = el('currSelect');
+const dateInput = el('dateInput');
+const amountInput = el('amountInput');
+const addBtn = el('addBtn');
+const addStatus = el('addStatus');
+const catGrid = el('catGrid');
+const sessionBody = el('sessionBody');
+const totalValue = el('totalValue');
+const exportBtn = el('exportBtn');
+const exportNote = el('exportNote');
+const cameraInput = el('cameraInput');
+const ocrStatus = el('ocrStatus');
+const ocrPreview = el('ocrPreview');
+const billsCount = el('billsCount');
+const billsGallery = el('billsGallery');
+const downloadBillsBtn = el('downloadBillsBtn');
+const projectInput = el('projectInput');
+const nameInput = el('nameInput');
+const monthInput = el('monthInput');
+const currencySetup = el('currencySetup');
+const billCatSelect = el('billCatSelect');
+const billsFilterSelect = el('billsFilterSelect');
+const persistStatus = el('persistStatus');
+const forgetBtn = el('forgetBtn');
+forgetBtn.addEventListener('click', () => {
+  if(!confirm('This will erase the file, entries and photos saved on this device. Export a copy first if you need it. Continue?')) return;
+  localStorage.removeItem(STORAGE_KEY);
+  location.reload();
+});
+
+dateInput.value = new Date().toISOString().slice(0,10);
+
+function fmtEur(n){ return '€' + n.toFixed(2); }
+function cellNum(cell){
+  if(cell === null || cell === undefined) return 0;
+  const v = cell.value;
+  if(v === null || v === undefined) return 0;
+  if(typeof v === 'number') return v;
+  if(typeof v === 'object' && 'result' in v && typeof v.result === 'number') return v.result;
+  return 0;
+}
+function isEmptyCell(cell){
+  if(!cell) return true;
+  const v = cell.value;
+  return v === null || v === undefined || v === '';
+}
+
+// ---------- parse workbook ----------
+function parseWorkbook(){
+  worksheet = workbook.worksheets.find(ws =>
+    ws.getCell('B3').value !== null || /summary/i.test(ws.name)
+  ) || workbook.worksheets[0];
+
+  const project = worksheet.getCell('C3').value;
+  const supervisor = worksheet.getCell('C4').value;
+  const monthVal = worksheet.getCell('C5').value;
+  let monthStr = '';
+  if(monthVal instanceof Date) monthStr = monthVal.toLocaleDateString(undefined,{year:'numeric',month:'long'});
+  else if(monthVal) monthStr = String(monthVal);
+
+  projectInput.value = project ? String(project) : '';
+  nameInput.value = supervisor ? String(supervisor) : '';
+  if(monthVal instanceof Date){
+    monthInput.value = `${monthVal.getFullYear()}-${String(monthVal.getMonth()+1).padStart(2,'0')}`;
+  } else {
+    monthInput.value = '';
+  }
+  fileInfoMonthStr = monthStr;
+  updateFileInfo();
+
+  // find exchange-rate row: column B value === 'DATE'
+  let rateRow = null;
+  worksheet.eachRow((row, rowNumber) => {
+    if(rateRow) return;
+    const bVal = row.getCell(2).value;
+    if(typeof bVal === 'string' && bVal.trim().toUpperCase() === 'DATE') rateRow = rowNumber;
+  });
+  if(!rateRow) throw new Error('Could not find the exchange-rate header row (column B "DATE").');
+  rateRowNum = rateRow;
+
+  // currency columns: C(3) D(4) E(5) F(6)
+  currencySlots = [];
+  for(let c = 3; c <= 6; c++){
+    const rateCell = worksheet.getRow(rateRow).getCell(c);
+    const rv = rateCell.value;
+    if(typeof rv === 'number' && rv > 0){
+      // rate-based column: look upward for a short text label in same column
+      let label = '', labelRow = null;
+      for(let up = 1; up <= 4; up++){
+        const v = worksheet.getRow(rateRow - up).getCell(c).value;
+        if(typeof v === 'string' && /^[A-Za-z]{2,10}$/.test(v.trim())){ label = v.trim().toUpperCase(); labelRow = rateRow - up; break; }
+      }
+      currencySlots.push({col:c, type:'rate', label, rate:rv, labelRow: labelRow || (rateRow - 2)});
+    } else if(typeof rv === 'string' && /^[A-Za-z]{2,10}$/.test(rv.trim())){
+      // e.g. "EURO" written directly in the rate row = direct euro column, no conversion
+      currencySlots.push({col:c, type:'direct', label: rv.trim().toUpperCase(), rate:1, labelRow:null});
+    } else {
+      // empty/unused rate slot — user can activate it by giving it a code
+      currencySlots.push({col:c, type:'rate', label:'', rate:1, labelRow: rateRow - 2});
+    }
+  }
+  rebuildCurrencyOpts();
+  if(currencyOpts.length === 0) throw new Error('Could not detect currency columns near the exchange-rate row.');
+
+  // find categories: column A text matching known keywords, followed eventually by a 'TOTAL' row
+  const keywordMap = [
+    {re:/food/i, label:'A. Food'},
+    {re:/laundry/i, label:'B. Laundry'},
+    {re:/phone/i, label:'C. Phone'},
+    {re:/hotel/i, label:'D. Hotel'},
+    {re:/transport/i, label:'E. Transport'},
+    {re:/various/i, label:'F. Various'},
+  ];
+  categories = [];
+  worksheet.eachRow((row, rowNumber) => {
+    const aVal = row.getCell(1).value;
+    if(typeof aVal !== 'string') return;
+    const match = keywordMap.find(k => k.re.test(aVal));
+    if(!match) return;
+
+    // walk downward to find slot rows + TOTAL row
+    let r = rowNumber + 1;
+    const slots = [];
+    let totalRow = null;
+    let guard = 0;
+    while(guard++ < 200){
+      const cellA = worksheet.getRow(r).getCell(1);
+      const aStr = typeof cellA.value === 'string' ? cellA.value.trim().toUpperCase() : null;
+      if(aStr === 'TOTAL'){ totalRow = r; break; }
+      if(typeof cellA.value === 'number'){
+        const rowObj = worksheet.getRow(r);
+        const used = !(isEmptyCell(rowObj.getCell(2)) &&
+                       currencyOpts.every(co => isEmptyCell(rowObj.getCell(co.col))));
+        slots.push({row:r, used});
+      }
+      r++;
+      if(r - rowNumber > 100) break;
+    }
+    if(!totalRow) return;
+
+    const totalCellG = worksheet.getRow(totalRow).getCell(7);
+    let originalTotal = cellNum(totalCellG);
+    if(originalTotal === 0){
+      originalTotal = slots.reduce((s,sl) => s + cellNum(worksheet.getRow(sl.row).getCell(7)), 0);
+    }
+
+    categories.push({
+      key: match.label,
+      label: match.label,
+      headerRow: rowNumber,
+      totalRow,
+      slots,
+      originalTotal
+    });
+  });
+
+  if(categories.length === 0) throw new Error('Could not find any expense categories (Food, Laundry, Phone, Hotel, Transport, Various).');
+}
+
+function updateFileInfo(){
+  const project = projectInput.value || '—';
+  const name = nameInput.value || '—';
+  fileInfo.innerHTML = `<span><b>Project</b> ${project}</span><span><b>Name</b> ${name}</span><span><b>Month</b> ${fileInfoMonthStr||'—'}</span>`;
+  fileInfo.style.display = 'inline-flex';
+}
+
+function rebuildCurrencyOpts(){
+  currencyOpts = currencySlots
+    .filter(s => s.label && s.label.trim() !== '')
+    .map(s => ({col:s.col, label:s.label, rate:s.rate}));
+}
+
+// re-run the eur conversion for every session entry that used the given column,
+// e.g. after its rate or currency code changed
+function recomputeEurForCol(col, newLabel, newRate){
+  sessionEntries.forEach(e => {
+    if(e.currCol !== col) return;
+    e.currLabel = newLabel;
+    e.eur = newRate ? e.amount / newRate : e.amount;
+    if(e.overflow && e.overflowRef){
+      e.overflowRef.currLabel = newLabel;
+      e.overflowRef.eur = e.eur;
+    }
+  });
+}
+
+function renderSetup(){
+  currencySetup.innerHTML = currencySlots.map((slot, i) => {
+    if(slot.type === 'direct'){
+      return `<div class="direct-row"><span><b>${slot.label}</b> — entered directly, no conversion</span></div>`;
+    }
+    return `
+      <div class="curr-row">
+        <div>
+          <span class="curr-tag">Code</span>
+          <input type="text" maxlength="10" data-idx="${i}" class="curr-code-input" value="${slot.label}" placeholder="e.g. USD">
+        </div>
+        <div>
+          <span class="curr-tag">Rate (units per €1)</span>
+          <input type="number" step="0.0001" min="0" data-idx="${i}" class="curr-rate-input" value="${slot.rate}">
+        </div>
+      </div>`;
+  }).join('');
+
+  currencySetup.querySelectorAll('.curr-code-input').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const idx = Number(inp.dataset.idx);
+      const slot = currencySlots[idx];
+      const newLabel = inp.value.trim().toUpperCase();
+      const oldLabel = slot.label;
+      slot.label = newLabel;
+      if(newLabel === '') slot.rate = slot.rate || 1;
+
+      // write back into the workbook so it's saved on export
+      if(worksheet && slot.labelRow != null){
+        worksheet.getRow(slot.labelRow).getCell(slot.col).value = newLabel || null;
+      }
+      rebuildCurrencyOpts();
+      populateSelectors();
+      recomputeEurForCol(slot.col, newLabel, slot.rate);
+      renderSetup();
+      renderAll();
+      queueSave();
+    });
+  });
+  currencySetup.querySelectorAll('.curr-rate-input').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const idx = Number(inp.dataset.idx);
+      const slot = currencySlots[idx];
+      const newRate = parseFloat(inp.value);
+      if(isNaN(newRate) || newRate <= 0) { inp.value = slot.rate; return; }
+      slot.rate = newRate;
+      if(worksheet) worksheet.getRow(rateRowNum).getCell(slot.col).value = newRate;
+      rebuildCurrencyOpts();
+      populateSelectors();
+      recomputeEurForCol(slot.col, slot.label, newRate);
+      renderAll();
+      queueSave();
+    });
+  });
+}
+
+projectInput.addEventListener('input', () => {
+  if(worksheet) worksheet.getCell('C3').value = projectInput.value;
+  updateFileInfo();
+  queueSave();
+});
+nameInput.addEventListener('input', () => {
+  if(worksheet) worksheet.getCell('C4').value = nameInput.value;
+  updateFileInfo();
+  queueSave();
+});
+monthInput.addEventListener('change', () => {
+  if(!monthInput.value) return;
+  const [y, m] = monthInput.value.split('-').map(Number);
+  const d = new Date(y, m - 1, 1);
+  if(worksheet) worksheet.getCell('C5').value = d;
+  fileInfoMonthStr = d.toLocaleDateString(undefined,{year:'numeric',month:'long'});
+  updateFileInfo();
+  queueSave();
+});
+
+function populateSelectors(){
+  catSelect.innerHTML = categories.map(c => `<option value="${c.key}">${c.label}</option>`).join('');
+  currSelect.innerHTML = currencyOpts.map(c => `<option value="${c.col}">${c.label}</option>`).join('');
+  billCatSelect.innerHTML = categories.map(c => `<option value="${c.key}">${c.label}</option>`).join('');
+  billsFilterSelect.innerHTML = '<option value="__all__">All categories</option>' +
+    categories.map(c => `<option value="${c.key}">${c.label}</option>`).join('');
+}
+
+function renderCategories(){
+  catGrid.innerHTML = categories.map(cat => {
+    const added = sessionEntries.filter(e => e.catKey === cat.key).reduce((s,e) => s + e.eur, 0);
+    const total = cat.originalTotal + added;
+    const freeSlots = cat.slots.filter(s => !s.used).length;
+    const overflowCount = (overflow[cat.key] || []).length;
+    let meta = `${freeSlots} row${freeSlots===1?'':'s'} free`;
+    let warnClass = '';
+    if(overflowCount > 0){
+      meta = `template full — ${overflowCount} on extra sheet`;
+      warnClass = 'warn';
+    }
+    return `<div class="cat-card">
+      <div class="cat-name">${cat.label}</div>
+      <div class="cat-sub">${fmtEur(total)}</div>
+      <div class="cat-meta ${warnClass}">${meta}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderSession(){
+  if(sessionEntries.length === 0){
+    sessionBody.innerHTML = '<tr class="empty-row"><td colspan="4">Nothing added yet.</td></tr>';
+  } else {
+    sessionBody.innerHTML = sessionEntries.map((e,i) => `
+      <tr>
+        <td>${e.catLabel.replace(/^[A-F]\.\s*/,'')}${e.overflow ? ' <span style="color:var(--amber);font-size:0.7em;">(extra)</span>' : ''}</td>
+        <td class="num">${e.date}</td>
+        <td class="num">${e.amount.toFixed(2)} ${e.currLabel}</td>
+        <td><button class="del-btn" data-idx="${i}">×</button></td>
+      </tr>
+    `).join('');
+  }
+  sessionBody.querySelectorAll('.del-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.dataset.idx);
+      const entry = sessionEntries[idx];
+      if(entry.overflow){
+        const list = overflow[entry.catKey];
+        const pos = list.indexOf(entry.overflowRef);
+        if(pos !== -1) list.splice(pos,1);
+      } else {
+        // free the slot back up and clear the written cells
+        const cat = categories.find(c => c.key === entry.catKey);
+        const slot = cat.slots.find(s => s.row === entry.row);
+        if(slot){
+          slot.used = false;
+          const rowObj = worksheet.getRow(entry.row);
+          rowObj.getCell(2).value = null;
+          rowObj.getCell(entry.currCol).value = null;
+        }
+      }
+      sessionEntries.splice(idx,1);
+      renderAll();
+      queueSave();
+    });
+  });
+}
+
+function renderTotal(){
+  const total = categories.reduce((s,c) => {
+    const added = sessionEntries.filter(e => e.catKey === c.key).reduce((s2,e) => s2 + e.eur, 0);
+    return s + c.originalTotal + added;
+  }, 0);
+  totalValue.textContent = fmtEur(total);
+}
+
+function renderAll(){
+  renderCategories();
+  renderSession();
+  renderTotal();
+}
+
+// ---------- load file ----------
+xlsxInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+  sourceFileName = file.name;
+  importStatus.className = 'import-status';
+  importStatus.textContent = 'Reading file…';
+
+  try{
+    const buf = await file.arrayBuffer();
+    workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buf);
+    parseWorkbook();
+    populateSelectors();
+    renderSetup();
+    sessionEntries = [];
+    overflow = {};
+    billImages = [];
+    renderBillsGallery();
+    categories.forEach(c => overflow[c.key] = []);
+    renderAll();
+
+    el('setupSection').classList.remove('disabled');
+    el('addSection').classList.remove('disabled');
+    exportBtn.disabled = false;
+    exportNote.textContent = `Will save back into ${sourceFileName}, keeping all formulas and formatting intact (the small yellow cell-note popups are removed on save, but no data is affected).`;
+    importStatus.className = 'import-status ok';
+    importStatus.textContent = `Loaded ${file.name} — ${categories.length} categories found.`;
+    saveState();
+  } catch(err){
+    importStatus.className = 'import-status error';
+    importStatus.textContent = 'Could not read this file: ' + err.message;
+    exportBtn.disabled = true;
+  }
+});
+
+// ---------- add expense ----------
+addBtn.addEventListener('click', () => {
+  if(!worksheet){ addStatus.textContent = 'Load your file first.'; addStatus.className='add-status warn'; return; }
+  const catKey = catSelect.value;
+  const cat = categories.find(c => c.key === catKey);
+  const amount = parseFloat(amountInput.value);
+  const dateStr = dateInput.value;
+  const currCol = parseInt(currSelect.value, 10);
+  const currLabel = currencyOpts.find(c => c.col === currCol).label;
+  const rate = currencyOpts.find(c => c.col === currCol).rate;
+
+  if(isNaN(amount) || amount <= 0){ addStatus.textContent = 'Enter a valid amount.'; addStatus.className='add-status warn'; amountInput.focus(); return; }
+  if(!dateStr){ addStatus.textContent = 'Pick a date.'; addStatus.className='add-status warn'; return; }
+
+  const eur = amount / rate;
+  const dateObj = new Date(dateStr + 'T00:00:00');
+
+  const freeSlot = cat.slots.find(s => !s.used);
+  if(freeSlot){
+    freeSlot.used = true;
+    const rowObj = worksheet.getRow(freeSlot.row);
+    rowObj.getCell(2).value = dateObj;
+    rowObj.getCell(currCol).value = amount;
+    sessionEntries.push({
+      catKey: cat.key, catLabel: cat.label, date: dateStr, amount, currCol, currLabel, eur,
+      row: freeSlot.row, overflow: false
+    });
+    addStatus.textContent = `Added to ${cat.label}, row ${freeSlot.row}.`;
+    addStatus.className = 'add-status ok';
+  } else {
+    const entry = {date: dateStr, amount, currLabel, eur};
+    const overflowIdx = overflow[cat.key].length;
+    overflow[cat.key].push(entry);
+    sessionEntries.push({
+      catKey: cat.key, catLabel: cat.label, date: dateStr, amount, currCol, currLabel, eur,
+      row: null, overflow: true, overflowRef: entry, overflowIdx
+    });
+    addStatus.textContent = `${cat.label} template is full — added to an "Additional entries" sheet instead.`;
+    addStatus.className = 'add-status warn';
+  }
+
+  amountInput.value = '';
+  amountInput.focus();
+  renderAll();
+  queueSave();
+});
+amountInput.addEventListener('keydown', e => { if(e.key === 'Enter') addBtn.click(); });
+
+// ---------- bills PDF ----------
+function fileToDataUrl(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+function loadImageDims(dataUrl){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+async function addBillImage(file){
+  const dataUrl = await fileToDataUrl(file);
+  const { width, height } = await loadImageDims(dataUrl);
+  const format = /png/i.test(file.type) ? 'PNG' : 'JPEG';
+  const cat = categories.find(c => c.key === billCatSelect.value);
+  billImages.push({ dataUrl, width, height, format, catKey: cat ? cat.key : null, catLabel: cat ? cat.label : 'Uncategorized' });
+  renderBillsGallery();
+  queueSave();
+}
+function renderBillsGallery(){
+  billsCount.textContent = billImages.length;
+  const filterVal = billsFilterSelect.value || '__all__';
+  const matching = filterVal === '__all__' ? billImages : billImages.filter(b => b.catKey === filterVal);
+  downloadBillsBtn.disabled = matching.length === 0;
+  billsGallery.innerHTML = billImages.map((b,i) => `
+    <div class="bill-thumb">
+      <img src="${b.dataUrl}">
+      <div class="thumb-tag">${(b.catLabel||'').replace(/^[A-F]\.\s*/,'')}</div>
+      <button class="thumb-del" data-idx="${i}" title="Remove">×</button>
+    </div>
+  `).join('');
+  billsGallery.querySelectorAll('.thumb-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      billImages.splice(Number(btn.dataset.idx), 1);
+      renderBillsGallery();
+      queueSave();
+    });
+  });
+}
+billsFilterSelect.addEventListener('change', renderBillsGallery);
+downloadBillsBtn.addEventListener('click', () => {
+  const filterVal = billsFilterSelect.value || '__all__';
+  const toExport = filterVal === '__all__' ? billImages : billImages.filter(b => b.catKey === filterVal);
+  if(toExport.length === 0) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const pageW = 210, pageH = 297, margin = 10;
+  const maxW = pageW - margin*2, maxH = pageH - margin*2;
+
+  toExport.forEach((b, i) => {
+    if(i > 0) doc.addPage('a4', 'portrait');
+    const ratio = b.width / b.height;
+    let drawW, drawH;
+    if(ratio > maxW / maxH){ drawW = maxW; drawH = maxW / ratio; }
+    else { drawH = maxH; drawW = maxH * ratio; }
+    const x = (pageW - drawW) / 2, y = (pageH - drawH) / 2;
+    doc.addImage(b.dataUrl, b.format, x, y, drawW, drawH);
+  });
+
+  const suffix = filterVal === '__all__' ? 'all' : filterVal.replace(/[^A-Za-z0-9]+/g,'-').toLowerCase();
+  doc.save(sourceFileName.replace(/\.[^.]+$/, '') + '-bills-' + suffix + '.pdf');
+});
+
+// ---------- scan / OCR ----------
+cameraInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+  ocrPreview.src = URL.createObjectURL(file);
+  ocrPreview.style.display = 'block';
+
+  await addBillImage(file);
+
+  if(typeof Tesseract === 'undefined'){
+    ocrStatus.textContent = 'OCR library unavailable — enter the amount manually below.';
+    return;
+  }
+  ocrStatus.textContent = 'Reading bill…';
+  try{
+    const result = await Tesseract.recognize(file, 'eng', {
+      logger: m => { if(m.status === 'recognizing text') ocrStatus.textContent = `Reading bill… ${Math.round(m.progress*100)}%`; }
+    });
+    const { price, dateStr } = extractBillInfo(result.data.text || '');
+    if(price !== null){
+      amountInput.value = price.toFixed(2);
+      ocrStatus.textContent = `Detected amount ${price.toFixed(2)} — check it, pick the category & currency, then add.`;
+    } else {
+      ocrStatus.textContent = 'Could not detect an amount — enter it manually below.';
+    }
+    if(dateStr) dateInput.value = dateStr;
+  } catch(err){
+    ocrStatus.textContent = 'Scan failed — enter the amount manually.';
+  }
+});
+
+function extractBillInfo(text){
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const numberPattern = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/g;
+  let bestPrice = null, bestFromTotalLine = null;
+  for(const line of lines){
+    const matches = [...line.matchAll(numberPattern)].map(m => parseFloat(m[1].replace(/,/g,'')));
+    if(matches.length === 0) continue;
+    const lineMax = Math.max(...matches);
+    if(/total|amount due|balance/i.test(line) && !/sub ?total/i.test(line)){
+      if(bestFromTotalLine === null || lineMax > bestFromTotalLine) bestFromTotalLine = lineMax;
+    }
+    if(bestPrice === null || lineMax > bestPrice) bestPrice = lineMax;
+  }
+  const price = bestFromTotalLine !== null ? bestFromTotalLine : bestPrice;
+
+  let dateStr = null;
+  const dateMatch = text.match(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/) ||
+                     text.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  if(dateMatch){
+    try{
+      let y,m,d;
+      if(dateMatch[1].length === 4){ y=dateMatch[1]; m=dateMatch[2]; d=dateMatch[3]; }
+      else { d=dateMatch[1]; m=dateMatch[2]; y=dateMatch[3]; }
+      const iso = `${y.padStart(4,'0')}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+      if(!isNaN(new Date(iso).getTime())) dateStr = iso;
+    } catch(e){}
+  }
+  return { price, dateStr };
+}
+
+// ---------- export ----------
+exportBtn.addEventListener('click', async () => {
+  if(!workbook) return;
+
+  // strip legacy cell-comment notes: this file's VML comments crash ExcelJS's
+  // writer (a known ExcelJS bug), so they're removed before saving. This only
+  // drops the little yellow note popups — no data, formulas or formatting are affected.
+  workbook.worksheets.forEach(ws => {
+    ws.eachRow(row => {
+      row.eachCell({ includeEmpty: false }, cell => {
+        if (cell.note) cell.note = undefined;
+      });
+    });
+  });
+
+  // write overflow entries to an extra sheet, if any
+  const hasOverflow = Object.values(overflow).some(list => list.length > 0);
+  const existingExtra = workbook.worksheets.find(w => w.name === 'Additional entries');
+  if(existingExtra) workbook.removeWorksheet(existingExtra.id);
+  if(hasOverflow){
+    const extra = workbook.addWorksheet('Additional entries');
+    extra.addRow(['Category','Date','Amount','Currency','EUR equivalent']);
+    extra.getRow(1).font = { bold: true };
+    Object.entries(overflow).forEach(([catKey, list]) => {
+      list.forEach(e => {
+        extra.addRow([catKey, e.date, e.amount, e.currLabel, Number(e.eur.toFixed(2))]);
+      });
+    });
+    extra.columns.forEach(c => c.width = 18);
+  }
+
+  exportBtn.disabled = true;
+  exportBtn.textContent = 'Preparing file…';
+  try{
+    const buf = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = sourceFileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } finally {
+    exportBtn.disabled = false;
+    exportBtn.textContent = 'Download updated file';
+  }
+});
+
+renderAll();
+restoreState();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+</script>
+
+</body>
+</html>
