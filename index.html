@@ -228,6 +228,7 @@
     <div class="import-status" id="persistStatus" style="display:none;"></div>
     <div class="load-actions">
       <button class="bills-btn" id="refreshBtn" style="display:none;">↻ Refresh from file</button>
+      <button class="bills-btn" id="newMonthBtn" style="display:none;">🗋 Start new month (clear all entries)</button>
       <button class="bills-btn" id="forgetBtn" style="display:none;">Forget saved data on this device</button>
     </div>
   </div>
@@ -449,8 +450,7 @@ async function restoreState(){
     renderBillsGallery();
     renderAll();
     refreshBtn.style.display = 'inline-flex';
-
-    el('setupSection').classList.remove('disabled');
+    newMonthBtn.style.display = 'inline-flex';
     el('addSection').classList.remove('disabled');
     exportBtn.disabled = false;
     exportNote.textContent = `Will save back into ${sourceFileName}, keeping all formulas and formatting intact.`;
@@ -494,6 +494,7 @@ const billsFilterSelect = el('billsFilterSelect');
 const persistStatus = el('persistStatus');
 const forgetBtn = el('forgetBtn');
 const refreshBtn = el('refreshBtn');
+const newMonthBtn = el('newMonthBtn');
 const existingBody = el('existingBody');
 const existingNote = el('existingNote');
 const clearExistingBtn = el('clearExistingBtn');
@@ -919,6 +920,35 @@ function renderAll(){
   renderTotal();
 }
 
+newMonthBtn.addEventListener('click', () => {
+  if(!worksheet) return;
+  const totalRows = existingEntries.length + sessionEntries.length;
+  if(totalRows === 0){ return; }
+  if(!confirm(`Start a new month? This clears every expense row across all categories (${totalRows} entr${totalRows===1?'y':'ies'} total — food, laundry, phone, hotel, transport, various). Project, name, month and currency setup are kept. Export a copy first if you need this month's data.`)) return;
+
+  categories.forEach(cat => {
+    cat.slots.forEach(slot => {
+      if(slot.used){
+        const rowObj = worksheet.getRow(slot.row);
+        rowObj.getCell(2).value = null;
+        currencyOpts.forEach(co => { rowObj.getCell(co.col).value = null; });
+      }
+      slot.used = false;
+    });
+    cat.hadExisting = true; // base total is now 0, not the stale file total
+  });
+
+  sessionEntries = [];
+  existingEntries = [];
+  overflow = {};
+  categories.forEach(c => overflow[c.key] = []);
+
+  renderAll();
+  queueSave();
+  addStatus.textContent = 'Started a new month — all categories are empty.';
+  addStatus.className = 'add-status ok';
+});
+
 clearExistingBtn.addEventListener('click', () => {
   if(existingEntries.length === 0) return;
   if(!confirm(`Clear all ${existingEntries.length} existing entr${existingEntries.length===1?'y':'ies'} from the file? This empties those rows — export a copy first if you need them.`)) return;
@@ -963,6 +993,7 @@ async function loadFromFile(file, isRefresh){
 
     lastFile = file;
     refreshBtn.style.display = 'inline-flex';
+    newMonthBtn.style.display = 'inline-flex';
     el('setupSection').classList.remove('disabled');
     el('addSection').classList.remove('disabled');
     exportBtn.disabled = false;
