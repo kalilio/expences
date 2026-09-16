@@ -321,7 +321,10 @@
         <tr class="empty-row"><td colspan="4">No entries found in the file.</td></tr>
       </tbody>
     </table>
-    <div class="setup-note" id="existingNote"></div>
+    <div class="bills-bar" style="margin-top:10px;">
+      <div class="setup-note" id="existingNote" style="margin:0;"></div>
+      <button class="bills-btn" id="clearExistingBtn" style="display:none;">Clear all these rows</button>
+    </div>
   </div>
 
   <div class="section" id="sessionSection">
@@ -493,6 +496,7 @@ const forgetBtn = el('forgetBtn');
 const refreshBtn = el('refreshBtn');
 const existingBody = el('existingBody');
 const existingNote = el('existingNote');
+const clearExistingBtn = el('clearExistingBtn');
 forgetBtn.addEventListener('click', () => {
   if(!confirm('This will erase the file, entries and photos saved on this device. Export a copy first if you need it. Continue?')) return;
   localStorage.removeItem(STORAGE_KEY);
@@ -872,8 +876,10 @@ function renderExisting(){
   if(existingEntries.length === 0){
     existingBody.innerHTML = '<tr class="empty-row"><td colspan="4">No entries found in the file.</td></tr>';
     existingNote.textContent = 'The file was read, but no filled-in expense rows were found.';
+    clearExistingBtn.style.display = 'none';
     return;
   }
+  clearExistingBtn.style.display = 'inline-flex';
 
   existingBody.innerHTML = existingEntries.map((e,i) => `
     <tr>
@@ -912,6 +918,25 @@ function renderAll(){
   renderSession();
   renderTotal();
 }
+
+clearExistingBtn.addEventListener('click', () => {
+  if(existingEntries.length === 0) return;
+  if(!confirm(`Clear all ${existingEntries.length} existing entr${existingEntries.length===1?'y':'ies'} from the file? This empties those rows — export a copy first if you need them.`)) return;
+  existingEntries.forEach(entry => {
+    const cat = categories.find(c => c.key === entry.catKey);
+    const slot = cat && cat.slots.find(s => s.row === entry.row);
+    if(slot){
+      slot.used = false;
+      const rowObj = worksheet.getRow(entry.row);
+      rowObj.getCell(2).value = null;
+      if(entry.currCol) rowObj.getCell(entry.currCol).value = null;
+    }
+  });
+  categories.forEach(c => { c.hadExisting = true; });
+  existingEntries = [];
+  renderAll();
+  queueSave();
+});
 
 // ---------- load file ----------
 async function loadFromFile(file, isRefresh){
