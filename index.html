@@ -202,6 +202,7 @@
   }
   .direct-row b{color:var(--ink);}
   .saved-flash{color:var(--green-deep) !important;}
+  .load-actions{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;}
 
   @media (max-width:480px){
     .row3, .row2, .row3-even, .cat-grid, .curr-row{grid-template-columns:1fr;}
@@ -225,7 +226,10 @@
     <input type="file" id="xlsxInput" accept=".xlsx">
     <div class="import-status" id="importStatus">No file loaded yet.</div>
     <div class="import-status" id="persistStatus" style="display:none;"></div>
-    <button class="bills-btn" id="forgetBtn" style="display:none; margin-top:8px;">Forget saved data on this device</button>
+    <div class="load-actions">
+      <button class="bills-btn" id="refreshBtn" style="display:none;">↻ Refresh from file</button>
+      <button class="bills-btn" id="forgetBtn" style="display:none;">Forget saved data on this device</button>
+    </div>
   </div>
 
   <div class="section disabled" id="setupSection">
@@ -309,6 +313,17 @@
     <div class="cat-grid" id="catGrid"></div>
   </div>
 
+  <div class="section" id="existingSection" style="display:none;">
+    <h2>Already in the file</h2>
+    <table>
+      <thead><tr><th>Category</th><th>Date</th><th>Amount</th><th></th></tr></thead>
+      <tbody id="existingBody">
+        <tr class="empty-row"><td colspan="4">No entries found in the file.</td></tr>
+      </tbody>
+    </table>
+    <div class="setup-note" id="existingNote"></div>
+  </div>
+
   <div class="section" id="sessionSection">
     <h2>Added this session</h2>
     <table>
@@ -335,12 +350,14 @@
 let workbook = null;
 let worksheet = null;
 let sourceFileName = 'expenses.xlsx';
-let categories = [];      // {key,label,headerRow,totalRow,slots:[{row,used}],rateRow,originalTotal}
+let categories = [];      // {key,label,headerRow,totalRow,slots:[{row,used}],fileTotal,hadExisting}
 let currencyOpts = [];    // {col,label,rate} -- active/usable currencies, derived from currencySlots
 let currencySlots = [];   // {col,type:'rate'|'direct'|'empty',label,rate,labelRow}
 let rateRowNum = null;
 let fileInfoMonthStr = '';
 let sessionEntries = [];  // {catKey,catLabel,date,amount,currCol,currLabel,eur,row|null(overflow)}
+let existingEntries = []; // rows already present in the uploaded file {catKey,catLabel,date,amount,currCol,currLabel,eur,row}
+let lastFile = null;      // the File the user picked, so "Refresh" can re-read it from disk
 let overflow = {};        // catKey -> [{date,amount,currLabel,eur}]
 let billImages = [];      // {dataUrl, width, height, format:'JPEG'|'PNG'}
 
@@ -425,8 +442,10 @@ async function restoreState(){
     });
     billImages = state.billImages || [];
 
+    readExistingEntries();
     renderBillsGallery();
     renderAll();
+    refreshBtn.style.display = 'inline-flex';
 
     el('setupSection').classList.remove('disabled');
     el('addSection').classList.remove('disabled');
@@ -471,6 +490,9 @@ const billCatSelect = el('billCatSelect');
 const billsFilterSelect = el('billsFilterSelect');
 const persistStatus = el('persistStatus');
 const forgetBtn = el('forgetBtn');
+const refreshBtn = el('refreshBtn');
+const existingBody = el('existingBody');
+const existingNote = el('existingNote');
 forgetBtn.addEventListener('click', () => {
   if(!confirm('This will erase the file, entries and photos saved on this device. Export a copy first if you need it. Continue?')) return;
   localStorage.removeItem(STORAGE_KEY);
@@ -599,11 +621,64 @@ function parseWorkbook(){
       headerRow: rowNumber,
       totalRow,
       slots,
-      originalTotal
+      fileTotal: originalTotal,
+      hadExisting: false
     });
   });
 
   if(categories.length === 0) throw new Error('Could not find any expense categories (Food, Laundry, Phone, Hotel, Transport, Various).');
+}
+
+// ---------- read entries that are already written in the file ----------
+// Call this AFTER sessionEntries is set, so rows this app wrote itself are not
+// counted a second time as pre-existing file data.
+function readExistingEntries(){
+  existingEntries = [];
+  if(!worksheet) return;
+  const claimed = new Set(sessionEntries.filter(e => !e.overflow && e.row).map(e => e.row));
+
+  categories.forEach(cat => {
+    let found = 0;
+    cat.slots.forEach(slot => {
+      if(!slot.used || claimed.has(slot.row)) return;
+      const rowObj = worksheet.getRow(slot.row);
+
+      let currCol = null, amount = 0;
+      for(const co of currencyOpts){
+        const v = cellNum(rowObj.getCell(co.col));
+        if(v){ currCol = co.col; amount = v; break; }
+      }
+
+      const dateVal = rowObj.getCell(2).value;
+      let dateStr = '';
+      if(dateVal instanceof Date){
+        dateStr = `${dateVal.getFullYear()}-${String(dateVal.getMonth()+1).padStart(2,'0')}-${String(dateVal.getDate()).padStart(2,'0')}`;
+      } else if(dateVal !== null && dateVal !== undefined && dateVal !== ''){
+        dateStr = String(dateVal);
+      }
+
+      if(currCol === null && !dateStr) return;
+
+      const co = currencyOpts.find(c => c.col === currCol);
+      // prefer the app's own conversion so rate edits stay consistent;
+      // fall back to column G if the currency column isn't active
+      const eur = co ? (co.rate ? amount / co.rate : amount) : cellNum(rowObj.getCell(7));
+
+      existingEntries.push({
+        catKey: cat.key, catLabel: cat.label, date: dateStr, amount,
+        currCol, currLabel: co ? co.label : '', eur, row: slot.row
+      });
+      found++;
+    });
+    cat.hadExisting = found > 0;
+  });
+}
+
+// EUR already accounted for in a category before this session's additions
+function catBaseTotal(cat){
+  const rows = existingEntries.filter(e => e.catKey === cat.key);
+  if(rows.length) return rows.reduce((s,e) => s + e.eur, 0);
+  return cat.hadExisting ? 0 : (cat.fileTotal || 0);
 }
 
 function updateFileInfo(){
@@ -622,6 +697,11 @@ function rebuildCurrencyOpts(){
 // re-run the eur conversion for every session entry that used the given column,
 // e.g. after its rate or currency code changed
 function recomputeEurForCol(col, newLabel, newRate){
+  existingEntries.forEach(e => {
+    if(e.currCol !== col) return;
+    e.currLabel = newLabel;
+    e.eur = newRate ? e.amount / newRate : e.amount;
+  });
   sessionEntries.forEach(e => {
     if(e.currCol !== col) return;
     e.currLabel = newLabel;
@@ -720,7 +800,7 @@ function populateSelectors(){
 function renderCategories(){
   catGrid.innerHTML = categories.map(cat => {
     const added = sessionEntries.filter(e => e.catKey === cat.key).reduce((s,e) => s + e.eur, 0);
-    const total = cat.originalTotal + added;
+    const total = catBaseTotal(cat) + added;
     const freeSlots = cat.slots.filter(s => !s.used).length;
     const overflowCount = (overflow[cat.key] || []).length;
     let meta = `${freeSlots} row${freeSlots===1?'':'s'} free`;
@@ -779,24 +859,65 @@ function renderSession(){
 function renderTotal(){
   const total = categories.reduce((s,c) => {
     const added = sessionEntries.filter(e => e.catKey === c.key).reduce((s2,e) => s2 + e.eur, 0);
-    return s + c.originalTotal + added;
+    return s + catBaseTotal(c) + added;
   }, 0);
   totalValue.textContent = fmtEur(total);
 }
 
+function renderExisting(){
+  const section = el('existingSection');
+  if(!workbook){ section.style.display = 'none'; return; }
+  section.style.display = 'block';
+
+  if(existingEntries.length === 0){
+    existingBody.innerHTML = '<tr class="empty-row"><td colspan="4">No entries found in the file.</td></tr>';
+    existingNote.textContent = 'The file was read, but no filled-in expense rows were found.';
+    return;
+  }
+
+  existingBody.innerHTML = existingEntries.map((e,i) => `
+    <tr>
+      <td>${e.catLabel.replace(/^[A-F]\.\s*/,'')}</td>
+      <td class="num">${e.date || '—'}</td>
+      <td class="num">${e.amount ? e.amount.toFixed(2) : '—'} ${e.currLabel}</td>
+      <td><button class="del-btn" data-idx="${i}" title="Clear this row in the file">×</button></td>
+    </tr>
+  `).join('');
+
+  const sum = existingEntries.reduce((s,e) => s + e.eur, 0);
+  existingNote.textContent = `${existingEntries.length} entr${existingEntries.length===1?'y':'ies'} read from the file — ${fmtEur(sum)}. Deleting one clears that row and frees it for a new expense.`;
+
+  existingBody.querySelectorAll('.del-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.dataset.idx);
+      const entry = existingEntries[idx];
+      const cat = categories.find(c => c.key === entry.catKey);
+      const slot = cat && cat.slots.find(s => s.row === entry.row);
+      if(slot){
+        slot.used = false;
+        const rowObj = worksheet.getRow(entry.row);
+        rowObj.getCell(2).value = null;
+        if(entry.currCol) rowObj.getCell(entry.currCol).value = null;
+      }
+      existingEntries.splice(idx,1);
+      renderAll();
+      queueSave();
+    });
+  });
+}
+
 function renderAll(){
   renderCategories();
+  renderExisting();
   renderSession();
   renderTotal();
 }
 
 // ---------- load file ----------
-xlsxInput.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if(!file) return;
+async function loadFromFile(file, isRefresh){
   sourceFileName = file.name;
   importStatus.className = 'import-status';
-  importStatus.textContent = 'Reading file…';
+  importStatus.textContent = isRefresh ? 'Re-reading file…' : 'Reading file…';
 
   try{
     const buf = await file.arrayBuffer();
@@ -807,22 +928,63 @@ xlsxInput.addEventListener('change', async (e) => {
     renderSetup();
     sessionEntries = [];
     overflow = {};
-    billImages = [];
-    renderBillsGallery();
     categories.forEach(c => overflow[c.key] = []);
+    if(!isRefresh){
+      billImages = [];
+    }
+    renderBillsGallery();
+    readExistingEntries();
     renderAll();
 
+    lastFile = file;
+    refreshBtn.style.display = 'inline-flex';
     el('setupSection').classList.remove('disabled');
     el('addSection').classList.remove('disabled');
     exportBtn.disabled = false;
     exportNote.textContent = `Will save back into ${sourceFileName}, keeping all formulas and formatting intact (the small yellow cell-note popups are removed on save, but no data is affected).`;
     importStatus.className = 'import-status ok';
-    importStatus.textContent = `Loaded ${file.name} — ${categories.length} categories found.`;
+    const n = existingEntries.length;
+    importStatus.textContent = `${isRefresh ? 'Refreshed' : 'Loaded'} ${file.name} — ${categories.length} categories, ${n} existing entr${n===1?'y':'ies'} read from the file.`;
     saveState();
   } catch(err){
     importStatus.className = 'import-status error';
     importStatus.textContent = 'Could not read this file: ' + err.message;
     exportBtn.disabled = true;
+  }
+}
+
+xlsxInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+  await loadFromFile(file, false);
+  // let the same file be picked again later
+  xlsxInput.value = '';
+});
+
+refreshBtn.addEventListener('click', async () => {
+  if(!workbook) return;
+
+  if(lastFile){
+    const hasWork = sessionEntries.length > 0;
+    if(hasWork && !confirm('Re-read the original file from your device? The ' + sessionEntries.length + ' row(s) you added in this session will be discarded. Export a copy first if you need them.')) return;
+    await loadFromFile(lastFile, true);
+    return;
+  }
+
+  // restored from this device with no file handle — re-scan the workbook we hold
+  try{
+    parseWorkbook();
+    populateSelectors();
+    renderSetup();
+    readExistingEntries();
+    renderAll();
+    importStatus.className = 'import-status ok';
+    const n = existingEntries.length;
+    importStatus.textContent = `Refreshed — ${categories.length} categories, ${n} existing entr${n===1?'y':'ies'} read. To re-read from the original file, choose it again above.`;
+    queueSave();
+  } catch(err){
+    importStatus.className = 'import-status error';
+    importStatus.textContent = 'Could not refresh: ' + err.message;
   }
 });
 
@@ -905,7 +1067,16 @@ function renderBillsGallery(){
   const filterVal = billsFilterSelect.value || '__all__';
   const matching = filterVal === '__all__' ? billImages : billImages.filter(b => b.catKey === filterVal);
   downloadBillsBtn.disabled = matching.length === 0;
-  billsGallery.innerHTML = billImages.map((b,i) => `
+
+  // keep each thumbnail's index into billImages so deleting still hits the right
+  // photo once the list is filtered
+  const visible = billImages
+    .map((b, i) => ({ b, i }))
+    .filter(({ b }) => filterVal === '__all__' || b.catKey === filterVal);
+
+  billsGallery.innerHTML = visible.length === 0
+    ? '<span class="bills-count" style="font-style:italic;">No bills in this category.</span>'
+    : visible.map(({ b, i }) => `
     <div class="bill-thumb">
       <img src="${b.dataUrl}">
       <div class="thumb-tag">${(b.catLabel||'').replace(/^[A-F]\.\s*/,'')}</div>
